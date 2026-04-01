@@ -86,7 +86,7 @@ Ejemplo: {"Marca": "Samsung", "Voltaje": "220"}`;
   const client = getAnthropicClient();
   const response = await client.messages.create({
     model: "claude-haiku-4-5",
-    max_tokens: 500,
+    max_tokens: 4096,
     system: `Sos un experto en catálogos de productos para marketplaces latinoamericanos.
 Completá atributos de productos basándote en su nombre y categoría.
 Respondé ÚNICAMENTE con JSON válido, sin markdown ni texto adicional.`,
@@ -168,12 +168,13 @@ export async function POST(req: NextRequest) {
         return;
       }
 
-      // Group cells by product row — 1 API call per product
-      const productMap = new Map<number, CellInfo[]>();
+      // Group cells by product row + marketplace — 1 API call per product per marketplace
+      const productMap = new Map<string, CellInfo[]>();
       for (const cell of cells) {
-        const list = productMap.get(cell.row) ?? [];
+        const key = `${cell.row}__${cell.marketplace}`;
+        const list = productMap.get(key) ?? [];
         list.push(cell);
-        productMap.set(cell.row, list);
+        productMap.set(key, list);
       }
 
       const products = [...productMap.entries()];
