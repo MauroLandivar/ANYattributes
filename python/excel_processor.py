@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
 """
 ANYattributes Excel Processor
-Uses openpyxl to correctly read Apache POI-generated Excel files,
-including cell background colors (red=mandatory, blue=optional).
+Reads Apache POI-generated Excel files from ANYMARKET.
+
+File structure:
+  Row 1: empty
+  Row 2: attribute names (compact, no spaces)
+  Row 3: marketplace
+  Row 4: data type (Numero / Listado / Texto)
+  Row 5: display labels ("ID Anymarket", attribute human labels...)
+  Row 6+: product data
+
+Colors (indexed palette):
+  indexed=10  → Red  (#FF0000) → mandatory attribute
+  indexed=48  → Blue (#3366FF) → optional attribute
 """
 
 import sys
@@ -10,10 +21,9 @@ import json
 import os
 import zipfile
 import xml.etree.ElementTree as ET
-from copy import copy
 
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Color
+from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
 
@@ -21,136 +31,149 @@ from openpyxl.utils import get_column_letter
 # Color utilities
 # ---------------------------------------------------------------------------
 
-def argb_to_rgb(argb: str) -> tuple[int, int, int]:
-    """Convert 6 or 8-char hex ARGB string to (r, g, b)."""
-    argb = argb.strip()
-    if len(argb) == 8:
-        r = int(argb[2:4], 16)
-        g = int(argb[4:6], 16)
-        b = int(argb[6:8], 16)
-    elif len(argb) == 6:
-        r = int(argb[0:2], 16)
-        g = int(argb[2:4], 16)
-        b = int(argb[4:6], 16)
-    else:
-        return (0, 0, 0)
-    return (r, g, b)
+# Full Excel indexed color palette (64 entries, BIFF8 standard)
+INDEXED_COLORS: dict[int, tuple[int, int, int]] = {
+    0:  (0,   0,   0),    # Black
+    1:  (255, 255, 255),  # White
+    2:  (255, 0,   0),    # Red
+    3:  (0,   255, 0),    # Lime
+    4:  (0,   0,   255),  # Blue
+    5:  (255, 255, 0),    # Yellow
+    6:  (255, 0,   255),  # Magenta
+    7:  (0,   255, 255),  # Cyan
+    8:  (0,   0,   0),    # Black
+    9:  (255, 255, 255),  # White
+    10: (255, 0,   0),    # Red   ← ANYMARKET mandatory cells
+    11: (0,   255, 0),    # Lime
+    12: (0,   0,   255),  # Blue
+    13: (255, 255, 0),    # Yellow
+    14: (255, 0,   255),  # Magenta
+    15: (0,   255, 255),  # Cyan
+    16: (128, 0,   0),    # Dark Red/Maroon
+    17: (0,   128, 0),    # Dark Green
+    18: (0,   0,   128),  # Navy
+    19: (128, 128, 0),    # Olive
+    20: (128, 0,   128),  # Purple
+    21: (0,   128, 128),  # Teal
+    22: (192, 192, 192),  # Silver
+    23: (128, 128, 128),  # Gray
+    24: (153, 153, 255),  # Lavender
+    25: (153, 51,  102),  # Mauve
+    26: (255, 255, 204),  # Light Yellow
+    27: (204, 255, 255),  # Light Cyan
+    28: (102, 0,   102),  # Dark Purple
+    29: (255, 128, 128),  # Salmon
+    30: (0,   102, 204),  # Medium Blue
+    31: (204, 204, 255),  # Light Lavender
+    32: (0,   0,   128),  # Dark Blue
+    33: (255, 0,   255),  # Magenta
+    34: (255, 255, 0),    # Yellow
+    35: (0,   255, 255),  # Cyan
+    36: (128, 0,   128),  # Purple
+    37: (128, 0,   0),    # Maroon
+    38: (0,   128, 128),  # Teal
+    39: (0,   0,   255),  # Blue
+    40: (0,   204, 255),  # Sky Blue
+    41: (204, 255, 255),  # Light Cyan
+    42: (204, 255, 204),  # Light Green
+    43: (255, 255, 153),  # Light Yellow
+    44: (153, 204, 255),  # Light Blue
+    45: (255, 153, 204),  # Light Pink
+    46: (204, 153, 255),  # Light Purple
+    47: (255, 204, 153),  # Peach
+    48: (51,  102, 255),  # Cornflower Blue ← ANYMARKET optional cells
+    49: (51,  204, 204),  # Teal Blue
+    50: (153, 204, 0),    # Yellow-Green
+    51: (255, 204, 0),    # Amber
+    52: (255, 153, 0),    # Orange
+    53: (255, 102, 0),    # Dark Orange
+    54: (102, 102, 153),  # Blue-Gray
+    55: (150, 150, 150),  # Medium Gray
+    56: (0,   51,  102),  # Dark Navy
+    57: (51,  153, 102),  # Medium Green
+    58: (0,   51,  0),    # Dark Green
+    59: (51,  51,  0),    # Dark Olive
+    60: (153, 51,  0),    # Brown
+    61: (153, 51,  102),  # Dark Mauve
+    62: (51,  51,  153),  # Dark Blue-Purple
+    63: (51,  51,  51),   # Very Dark Gray
+}
 
 
 def classify_color(r: int, g: int, b: int) -> str | None:
-    """
-    Classify an RGB value as 'red', 'blue', 'green', or None.
-    Thresholds are intentionally broad to catch shades used by ANYMARKET.
-    """
-    # Red: clearly dominant red channel
+    """Classify RGB as 'red', 'blue', 'green', or None."""
     if r > 160 and g < 120 and b < 120:
         return "red"
-    # Blue: clearly dominant blue channel (incl. Excel standard blue #5B9BD5 = 91,155,213)
-    if b > 130 and b > r + 30 and b > g - 30:
+    if b > 130 and b > r + 30:
         return "blue"
-    # Green (headers): dominant green
     if g > 150 and g > r + 30 and g > b + 30:
         return "green"
     return None
 
 
-# Indexed color table (Excel legacy) — 64-entry standard palette
-INDEXED_COLORS = {
-    2: (255, 0, 0),      # Red
-    3: (0, 255, 0),      # Bright green
-    4: (0, 0, 255),      # Blue
-    5: (255, 255, 0),    # Yellow
-    6: (255, 0, 255),    # Magenta
-    7: (0, 255, 255),    # Cyan
-    10: (128, 0, 0),     # Dark red
-    11: (0, 128, 0),     # Dark green
-    12: (0, 0, 128),     # Dark blue
-    39: (204, 153, 255), # Light purple
-    40: (255, 204, 153), # Light peach
-    41: (51, 102, 255),  # Medium blue
-    42: (51, 153, 102),  # Teal
-    43: (255, 255, 153), # Light yellow
-    44: (102, 102, 153), # Muted purple
-    45: (150, 150, 150), # Gray
-    46: (0, 102, 204),   # ANYMARKET-style blue
-    # Add more as needed
-}
-
-
 def get_cell_color(cell) -> str | None:
-    """Return 'red', 'blue', 'green', or None based on the cell's fill color."""
+    """Read openpyxl cell fill color → 'red', 'blue', 'green', or None."""
     try:
         fill = cell.fill
         if fill is None or fill.fill_type in (None, "none"):
             return None
-
         fg = fill.fgColor
-
         if fg.type == "rgb":
             argb = fg.rgb or ""
             if not argb or argb in ("00000000", "FFFFFFFF", "FF000000"):
                 return None
-            r, g, b = argb_to_rgb(argb)
+            r = int(argb[2:4], 16)
+            g = int(argb[4:6], 16)
+            b = int(argb[6:8], 16)
             return classify_color(r, g, b)
-
         elif fg.type == "indexed":
-            idx = fg.indexed
-            rgb = INDEXED_COLORS.get(idx)
+            rgb = INDEXED_COLORS.get(fg.indexed)
             if rgb:
                 return classify_color(*rgb)
-
         elif fg.type == "theme":
-            # Theme colors require resolving the theme XML — handled below
-            return None
-
+            return None  # theme colors need full theme XML resolution
     except Exception:
         pass
-
     return None
 
 
-def get_cell_color_from_xml(filepath: str) -> dict[str, dict[str, str]]:
+def get_xml_colors(filepath: str) -> dict[str, str]:
     """
-    Fallback: directly parse xlsx XML to extract cell fill colors.
-    Returns dict: { "sheet_name": { "A1": "red", "B3": "blue", ... } }
-    This handles theme colors and edge cases that openpyxl misses.
+    Fallback: parse xlsx zip XML to extract cell colors.
+    Returns { "A1": "red", "B3": "blue", ... } for the first sheet.
     """
-    result: dict[str, dict[str, str]] = {}
-
+    result: dict[str, str] = {}
     try:
         with zipfile.ZipFile(filepath) as z:
             names = z.namelist()
 
-            # Parse styles.xml to build xf → fill → color mapping
+            # Parse fills from styles.xml
             styles_xml = z.read("xl/styles.xml")
             styles_root = ET.fromstring(styles_xml)
             ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 
-            # Extract fills
-            fills = []
+            fills: list[str | None] = []
             fills_elem = styles_root.find("x:fills", ns)
             if fills_elem is not None:
                 for fill_elem in fills_elem.findall("x:fill", ns):
-                    pf = fill_elem.find("x:patternFill", ns)
                     color = None
+                    pf = fill_elem.find("x:patternFill", ns)
                     if pf is not None:
                         fg_elem = pf.find("x:fgColor", ns)
                         if fg_elem is not None:
                             argb = fg_elem.get("rgb", "")
-                            theme = fg_elem.get("theme")
                             indexed = fg_elem.get("indexed")
                             if argb and argb not in ("00000000", "FFFFFFFF"):
-                                r, g, b = argb_to_rgb(argb)
+                                r, g, b = int(argb[2:4], 16), int(argb[4:6], 16), int(argb[6:8], 16)
                                 color = classify_color(r, g, b)
-                            elif indexed:
-                                idx = int(indexed)
-                                rgb = INDEXED_COLORS.get(idx)
+                            elif indexed is not None:
+                                rgb = INDEXED_COLORS.get(int(indexed))
                                 if rgb:
                                     color = classify_color(*rgb)
                     fills.append(color)
 
-            # Extract xfs (cell formats) → fill index
-            xfs = []
+            # Map xf index → fill color
+            xfs: list[str | None] = []
             cell_xfs = styles_root.find("x:cellXfs", ns)
             if cell_xfs is not None:
                 for xf in cell_xfs.findall("x:xf", ns):
@@ -161,28 +184,25 @@ def get_cell_color_from_xml(filepath: str) -> dict[str, dict[str, str]]:
                     else:
                         xfs.append(None)
 
-            # Parse each sheet
-            sheet_files = [n for n in names if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")]
-            for sheet_file in sheet_files:
-                sheet_name = sheet_file
-                sheet_colors: dict[str, str] = {}
-                sheet_xml = z.read(sheet_file)
+            # Read first sheet
+            sheet_files = sorted(
+                n for n in names
+                if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")
+            )
+            if sheet_files:
+                sheet_xml = z.read(sheet_files[0])
                 sheet_root = ET.fromstring(sheet_xml)
-
-                for row_elem in sheet_root.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}row"):
-                    for c_elem in row_elem.iter("{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c"):
-                        ref = c_elem.get("r", "")
-                        s_attr = c_elem.get("s")
-                        if s_attr is not None:
-                            xf_idx = int(s_attr)
-                            if xf_idx < len(xfs) and xfs[xf_idx]:
-                                sheet_colors[ref] = xfs[xf_idx]
-
-                result[sheet_name] = sheet_colors
+                ns2 = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+                for c_elem in sheet_root.iter(f"{{{ns2}}}c"):
+                    ref = c_elem.get("r", "")
+                    s_attr = c_elem.get("s")
+                    if s_attr is not None:
+                        xf_idx = int(s_attr)
+                        if xf_idx < len(xfs) and xfs[xf_idx]:
+                            result[ref] = xfs[xf_idx]
 
     except Exception as e:
-        sys.stderr.write(f"XML fallback error: {e}\n")
-
+        sys.stderr.write(f"[xml_colors] {e}\n")
     return result
 
 
@@ -191,10 +211,7 @@ def get_cell_color_from_xml(filepath: str) -> dict[str, dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 def extract_dv_options(ws) -> dict[str, list[str]]:
-    """
-    Extract data validation dropdown options per column letter.
-    Returns { "E": ["Option1", "Option2", ...], ... }
-    """
+    """Extract dropdown options per column letter from data validations."""
     options: dict[str, list[str]] = {}
     try:
         for dv in ws.data_validations.dataValidation:
@@ -202,12 +219,10 @@ def extract_dv_options(ws) -> dict[str, list[str]]:
                 continue
             formula = dv.formula1.strip('"').strip("'")
             if "!" in formula:
-                # Named range or external reference — skip for now
                 continue
             opts = [o.strip() for o in formula.replace(";", ",").split(",") if o.strip()]
-            if not opts:
+            if len(opts) < 2:
                 continue
-            # Apply to all cells in the validation range
             try:
                 for cell_range in dv.sqref.ranges:
                     for col in range(cell_range.min_col, cell_range.max_col + 1):
@@ -222,14 +237,51 @@ def extract_dv_options(ws) -> dict[str, list[str]]:
 
 
 # ---------------------------------------------------------------------------
+# Auto-detect file structure
+# ---------------------------------------------------------------------------
+
+def detect_structure(ws) -> dict:
+    """
+    Auto-detect header and data rows.
+    Returns { data_start_row, attr_name_row, marketplace_row,
+              data_type_row, label_row }
+    """
+    # Find first row where column A has a numeric product ID
+    data_start_row = 6  # default for ANYMARKET planillas
+    for row in range(3, 15):
+        val = ws.cell(row=row, column=1).value
+        if val is not None and str(val).strip():
+            # Check it looks like a product ID (not a label)
+            s = str(val).strip()
+            if s[0].isdigit() or (len(s) > 5 and s.replace(" ", "").isalnum()):
+                # Also verify row above has "ID Anymarket" or similar label
+                above = ws.cell(row=row - 1, column=1).value
+                if above and "ID" in str(above).upper():
+                    data_start_row = row
+                    break
+                elif above is None or str(above).strip() == "":
+                    data_start_row = row
+                    break
+
+    label_row = data_start_row - 1      # e.g. row 5
+    data_type_row = data_start_row - 2  # e.g. row 4
+    marketplace_row = data_start_row - 3  # e.g. row 3
+    attr_name_row = data_start_row - 4    # e.g. row 2
+
+    return {
+        "data_start_row": data_start_row,
+        "attr_name_row": max(1, attr_name_row),
+        "marketplace_row": max(1, marketplace_row),
+        "data_type_row": max(1, data_type_row),
+        "label_row": max(1, label_row),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main analysis
 # ---------------------------------------------------------------------------
 
 def analyze_file(filepath: str) -> dict:
-    """
-    Analyze an Excel file and return structured data about empty colored cells.
-    """
-    # Load with data_only=True to read cached cell values
     wb = openpyxl.load_workbook(filepath, data_only=True)
     ws = wb.active
 
@@ -239,42 +291,45 @@ def analyze_file(filepath: str) -> dict:
     max_col = ws.max_column or 0
     max_row = ws.max_row or 0
 
-    # --- Build XML fallback color map (for theme/indexed colors) ---
-    xml_colors = get_cell_color_from_xml(filepath)
-    # Use the first sheet's XML colors as fallback
-    xml_sheet_colors: dict[str, str] = {}
-    if xml_colors:
-        first_key = next(iter(xml_colors))
-        xml_sheet_colors = xml_colors[first_key]
+    # Auto-detect structure
+    struct = detect_structure(ws)
+    data_start_row = struct["data_start_row"]
+    attr_name_row = struct["attr_name_row"]
+    marketplace_row = struct["marketplace_row"]
+    data_type_row = struct["data_type_row"]
+    label_row = struct["label_row"]
+
+    # Build XML fallback color map
+    xml_colors = get_xml_colors(filepath)
 
     def resolve_color(cell) -> str | None:
         color = get_cell_color(cell)
         if color is None:
-            # Try XML fallback
-            cell_ref = f"{get_column_letter(cell.column)}{cell.row}"
-            color = xml_sheet_colors.get(cell_ref)
+            ref = f"{get_column_letter(cell.column)}{cell.row}"
+            color = xml_colors.get(ref)
         return color
 
-    # --- Read column headers (rows 1-4) ---
+    # Read attribute headers — only columns where attr_name_row has a value
     headers: dict[str, dict] = {}
-    for col in range(5, max_col + 1):
+    for col in range(1, max_col + 1):
         col_letter = get_column_letter(col)
-        name = ws.cell(row=1, column=col).value
-        marketplace = ws.cell(row=2, column=col).value
-        data_type = ws.cell(row=3, column=col).value
-        dropdown_label = ws.cell(row=4, column=col).value
-        if name or marketplace:
-            headers[col_letter] = {
-                "name": str(name) if name is not None else "",
-                "marketplace": str(marketplace) if marketplace is not None else "",
-                "data_type": str(data_type) if data_type is not None else "",
-                "dropdown_label": str(dropdown_label) if dropdown_label is not None else "",
-            }
+        attr_name = ws.cell(row=attr_name_row, column=col).value
+        if not attr_name or not str(attr_name).strip():
+            continue
+        marketplace = ws.cell(row=marketplace_row, column=col).value
+        data_type = ws.cell(row=data_type_row, column=col).value
+        dropdown_label = ws.cell(row=label_row, column=col).value
+        headers[col_letter] = {
+            "name": str(attr_name).strip(),
+            "marketplace": str(marketplace).strip() if marketplace else "",
+            "data_type": str(data_type).strip() if data_type else "",
+            "dropdown_label": str(dropdown_label).strip() if dropdown_label else "",
+        }
 
-    # --- Extract data validation options ---
+    # Extract data validation options
     dv_options = extract_dv_options(ws)
 
-    # Parse dropdown labels as fallback options (e.g. "Opt1;Opt2;Opt3")
+    # Parse dropdown labels as fallback options
     label_options: dict[str, list[str]] = {}
     for col_letter, hdr in headers.items():
         label = hdr.get("dropdown_label", "")
@@ -284,22 +339,17 @@ def analyze_file(filepath: str) -> dict:
                 label_options[col_letter] = opts
 
     def get_options(col_letter: str) -> list[str]:
-        if col_letter in dv_options:
-            return dv_options[col_letter]
-        if col_letter in label_options:
-            return label_options[col_letter]
-        return []
+        return dv_options.get(col_letter) or label_options.get(col_letter) or []
 
-    # --- Scan data rows (row 5+) ---
+    # Scan product rows
     cells_to_fill: list[dict] = []
     total_products = 0
     red_cells_empty = 0
     blue_cells_empty = 0
-    unknown_cells_empty = 0  # empty attribute cells with no detected color
+    unknown_cells_empty = 0
 
-    for row in range(5, max_row + 1):
-        product_id_cell = ws.cell(row=row, column=1)
-        product_id = product_id_cell.value
+    for row in range(data_start_row, max_row + 1):
+        product_id = ws.cell(row=row, column=1).value
         if product_id is None or str(product_id).strip() == "":
             continue
 
@@ -308,39 +358,35 @@ def analyze_file(filepath: str) -> dict:
         category = ws.cell(row=row, column=3).value
         skus = ws.cell(row=row, column=4).value
 
-        for col in range(5, max_col + 1):
-            cell = ws.cell(row=row, column=col)
+        for col in range(1, max_col + 1):
             col_letter = get_column_letter(col)
-
             if col_letter not in headers:
                 continue
 
-            # Only process empty cells
+            cell = ws.cell(row=row, column=col)
             cell_value = cell.value
             if cell_value is not None and str(cell_value).strip() != "":
-                continue
+                continue  # already has a value
 
             color = resolve_color(cell)
-            hdr = headers[col_letter]
 
             if color == "red":
                 red_cells_empty += 1
             elif color == "blue":
                 blue_cells_empty += 1
             else:
-                # No color detected — likely theme color from Apache POI
-                # Count as "unknown" so the UI can offer force mode
                 unknown_cells_empty += 1
                 color = "none"
 
+            hdr = headers[col_letter]
             cells_to_fill.append({
                 "row": row,
                 "col": col,
                 "col_letter": col_letter,
                 "product_id": str(product_id),
-                "product_name": str(product_name) if product_name is not None else "",
-                "category": str(category) if category is not None else "",
-                "skus": str(skus) if skus is not None else "",
+                "product_name": str(product_name) if product_name else "",
+                "category": str(category) if category else "",
+                "skus": str(skus) if skus else "",
                 "attribute_name": hdr["name"],
                 "marketplace": hdr["marketplace"],
                 "data_type": hdr["data_type"],
@@ -359,6 +405,7 @@ def analyze_file(filepath: str) -> dict:
         "headers": headers,
         "cells": cells_to_fill,
         "filename": os.path.basename(filepath),
+        "structure": struct,
     }
 
 
@@ -367,13 +414,6 @@ def analyze_file(filepath: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def write_file(source_filepath: str, cells_data: list[dict], output_filepath: str) -> None:
-    """
-    Write AI-generated values to empty cells and save the file.
-    - Preserves all original formatting (colors, dropdowns, validations)
-    - Changes font color to WHITE on filled cells to indicate AI completion
-    - Keeps background color intact
-    """
-    # Load without data_only to preserve formulas in existing cells
     wb = openpyxl.load_workbook(source_filepath)
     ws = wb.active
 
@@ -384,15 +424,13 @@ def write_file(source_filepath: str, cells_data: list[dict], output_filepath: st
         row = item["row"]
         col = item["col"]
         value = item.get("value")
-
         if value is None or str(value).strip() == "":
             continue
 
         cell = ws.cell(row=row, column=col)
 
-        # Write the value
         data_type = item.get("data_type", "").lower()
-        if data_type == "numero":
+        if "numero" in data_type or "number" in data_type:
             try:
                 cell.value = float(str(value).replace(",", "."))
             except (ValueError, TypeError):
@@ -400,7 +438,6 @@ def write_file(source_filepath: str, cells_data: list[dict], output_filepath: st
         else:
             cell.value = str(value)
 
-        # Set font color to white (preserve other font properties)
         existing_font = cell.font
         cell.font = Font(
             name=existing_font.name,
@@ -409,7 +446,7 @@ def write_file(source_filepath: str, cells_data: list[dict], output_filepath: st
             italic=existing_font.italic,
             underline=existing_font.underline,
             strike=existing_font.strike,
-            color="FFFFFFFF",  # White — signals AI-filled
+            color="FFFFFFFF",  # white = AI-filled indicator
         )
 
     wb.save(output_filepath)
@@ -417,7 +454,7 @@ def write_file(source_filepath: str, cells_data: list[dict], output_filepath: st
 
 
 # ---------------------------------------------------------------------------
-# CLI entry point
+# CLI
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
@@ -431,13 +468,12 @@ if __name__ == "__main__":
         if len(sys.argv) < 3:
             print(json.dumps({"error": "Usage: analyze <filepath>"}))
             sys.exit(1)
-        filepath = sys.argv[2]
-        if not os.path.exists(filepath):
-            print(json.dumps({"error": f"File not found: {filepath}"}))
+        fp = sys.argv[2]
+        if not os.path.exists(fp):
+            print(json.dumps({"error": f"File not found: {fp}"}))
             sys.exit(1)
         try:
-            result = analyze_file(filepath)
-            print(json.dumps(result, ensure_ascii=False))
+            print(json.dumps(analyze_file(fp), ensure_ascii=False))
         except Exception as e:
             print(json.dumps({"error": str(e)}))
             sys.exit(1)
@@ -446,12 +482,7 @@ if __name__ == "__main__":
         if len(sys.argv) < 5:
             print(json.dumps({"error": "Usage: write <source> <cells_json_file> <output>"}))
             sys.exit(1)
-        source = sys.argv[2]
-        cells_json_path = sys.argv[3]
-        output = sys.argv[4]
-        if not os.path.exists(source):
-            print(json.dumps({"error": f"Source file not found: {source}"}))
-            sys.exit(1)
+        source, cells_json_path, output = sys.argv[2], sys.argv[3], sys.argv[4]
         try:
             with open(cells_json_path, encoding="utf-8") as f:
                 cells_data = json.load(f)

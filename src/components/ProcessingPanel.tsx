@@ -2,10 +2,8 @@
 
 export interface ProcessingLogEntry {
   product_name: string;
-  attribute_name: string;
-  value: string;
-  color: "red" | "blue";
-  marketplace: string;
+  attributes_filled: number;
+  attributes_error: number;
   status: "ok" | "error";
 }
 
@@ -54,7 +52,7 @@ export default function ProcessingPanel({
         <div className="flex justify-between items-center mb-3">
           <span className="text-sm font-medium text-slate-700">Progreso general</span>
           <span className="text-sm font-bold text-[#1e3a5f]">
-            {processed} / {total} celdas
+            {processed} / {total} productos
           </span>
         </div>
 
@@ -67,7 +65,7 @@ export default function ProcessingPanel({
 
         <div className="flex justify-between items-center mt-2">
           <span className="text-xs text-slate-500">
-            {remaining > 0 ? `${remaining} restantes` : "Finalizando..."}
+            {remaining > 0 ? `${remaining} productos restantes` : "Finalizando..."}
           </span>
           <span className="text-xs font-bold text-[#F97316]">{percent}%</span>
         </div>
@@ -77,7 +75,7 @@ export default function ProcessingPanel({
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-white rounded-xl border border-slate-200 p-4 text-center shadow-sm">
           <p className="text-2xl font-bold text-[#F97316]">{processed}</p>
-          <p className="text-xs text-slate-500 mt-1">Completadas</p>
+          <p className="text-xs text-slate-500 mt-1">Procesados</p>
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-4 text-center shadow-sm">
           <p className="text-2xl font-bold text-slate-400">{remaining}</p>
@@ -85,9 +83,9 @@ export default function ProcessingPanel({
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-4 text-center shadow-sm">
           <p className="text-2xl font-bold text-green-500">
-            {log.filter((l) => l.status === "ok").length}
+            {log.reduce((acc, l) => acc + (l.attributes_filled || 0), 0)}
           </p>
-          <p className="text-xs text-slate-500 mt-1">Exitosas</p>
+          <p className="text-xs text-slate-500 mt-1">Atributos completados</p>
         </div>
       </div>
 
@@ -98,16 +96,16 @@ export default function ProcessingPanel({
             <h3 className="text-sm font-semibold text-[#1e3a5f]">
               Registro de procesamiento
             </h3>
-            <span className="text-xs text-slate-400">{log.length} entradas</span>
+            <span className="text-xs text-slate-400">{log.length} productos</span>
           </div>
 
           <div className="max-h-64 overflow-y-auto divide-y divide-slate-50">
             {[...log].reverse().map((entry, i) => (
-              <div key={i} className="log-item px-5 py-3 flex items-start gap-3">
+              <div key={i} className="log-item px-5 py-3 flex items-center gap-3">
                 {/* Status icon */}
                 {entry.status === "ok" ? (
                   <svg
-                    className="w-4 h-4 text-green-500 mt-0.5 shrink-0"
+                    className="w-4 h-4 text-green-500 shrink-0"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -116,7 +114,7 @@ export default function ProcessingPanel({
                   </svg>
                 ) : (
                   <svg
-                    className="w-4 h-4 text-red-400 mt-0.5 shrink-0"
+                    className="w-4 h-4 text-red-400 shrink-0"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -127,32 +125,16 @@ export default function ProcessingPanel({
 
                 {/* Content */}
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-medium text-slate-700 truncate max-w-32">
-                      {entry.product_name || "Producto sin nombre"}
-                    </span>
-                    <span className="text-slate-300">·</span>
-                    <span className="text-xs text-slate-500">{entry.attribute_name}</span>
-                    {entry.marketplace && (
-                      <>
-                        <span className="text-slate-300">·</span>
-                        <span className="text-xs text-slate-400">{entry.marketplace}</span>
-                      </>
+                  <p className="text-xs font-medium text-slate-700 truncate">
+                    {entry.product_name || "Producto sin nombre"}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {entry.attributes_filled} atributo{entry.attributes_filled !== 1 ? "s" : ""} completado{entry.attributes_filled !== 1 ? "s" : ""}
+                    {entry.attributes_error > 0 && (
+                      <span className="text-red-400"> · {entry.attributes_error} error{entry.attributes_error !== 1 ? "es" : ""}</span>
                     )}
-                  </div>
-                  {entry.status === "ok" && (
-                    <p className="text-xs font-semibold text-[#1e3a5f] mt-0.5 truncate">
-                      → {entry.value}
-                    </p>
-                  )}
+                  </p>
                 </div>
-
-                {/* Color badge */}
-                <span
-                  className={`shrink-0 w-2 h-2 rounded-full mt-1.5 ${
-                    entry.color === "red" ? "bg-red-400" : "bg-blue-400"
-                  }`}
-                />
               </div>
             ))}
           </div>

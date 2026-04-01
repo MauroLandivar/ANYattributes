@@ -78,12 +78,16 @@ export default function AnalysisPanel({
     analysis.blue_cells_empty === 0 &&
     analysis.unknown_cells_empty > 0;
 
-  const cellsToProcess = includeAll
-    ? analysis.unknown_cells_empty + analysis.red_cells_empty + analysis.blue_cells_empty
-    : (includeObligatory ? analysis.red_cells_empty : 0) +
-      (includeOptional ? analysis.blue_cells_empty : 0);
+  const selectedCells = analysis.cells.filter((c) => {
+    if (includeAll) return true;
+    if (c.color === "red" && includeObligatory) return true;
+    if (c.color === "blue" && includeOptional) return true;
+    return false;
+  });
 
-  const estimatedMinutes = Math.max(1, Math.ceil((cellsToProcess * 2) / 60));
+  const cellsToProcess = selectedCells.length;
+  const uniqueProducts = new Set(selectedCells.map((c) => c.row)).size;
+  const estimatedMinutes = Math.max(1, Math.ceil((uniqueProducts * 3) / 60));
   const hasAnythingToProcess = cellsToProcess > 0;
 
   const marketplaces = [...new Set(analysis.cells.map((c) => c.marketplace).filter(Boolean))];

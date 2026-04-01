@@ -30,7 +30,7 @@ interface CellInfo {
   data_type: string;
   dropdown_label: string;
   options: string[];
-  color: "red" | "blue";
+  color: "red" | "blue" | "none";
 }
 
 interface ProcessRequest {
@@ -40,68 +40,89 @@ interface ProcessRequest {
 }
 
 type SSEData =
-  | { type: "progress"; processed: number; total: number; cell: { row: number; col: number }; value: string; product_name: string; attribute_name: string; color: "red" | "blue"; marketplace: string; status: "ok" | "error" }
+  | {
+      type: "progress";
+      processed: number;
+      total: number;
+      product_name: string;
+      attributes_filled: number;
+      attributes_error: number;
+      status: "ok" | "error";
+    }
   | { type: "done"; sessionId: string; processedCount: number; errorCount: number }
   | { type: "error"; message: string };
 
-async function getAIValue(cell: CellInfo): Promise<string> {
-  const dataTypeLower = (cell.data_type || "").toLowerCase();
-  const isListado = dataTypeLower.includes("listado") || dataTypeLower.includes("list");
-  const isNumero = dataTypeLower.includes("numero") || dataTypeLower.includes("number");
+async function getProductValues(cells: CellInfo[]): Promise<Record<string, string>> {
+  const product = cells[0];
 
-  const systemPrompt = `Eres un experto en catálogos de productos para marketplaces.
-Tu tarea es completar atributos faltantes de productos basándote en el nombre del producto y su categoría.
-Responde ÚNICAMENTE con el valor solicitado, sin explicaciones ni texto adicional.`;
+  const attributeLines = cells
+    .map((cell) => {
+      const typeLower = (cell.data_type || "").toLowerCase();
+      const isListado = typeLower.includes("listado") || typeLower.includes("list");
+      const isNumero = typeLower.includes("numero") || typeLower.includes("number");
 
-  let userPrompt = `Producto: ${cell.product_name || "desconocido"}
-Categoría: ${cell.category || "desconocida"}
-Marketplace: ${cell.marketplace || "desconocido"}
-Atributo a completar: ${cell.attribute_name || "desconocido"}
-Tipo de dato: ${cell.data_type || "Texto"}`;
+      let line = `- ${cell.attribute_name}`;
+      if (isListado && cell.options.length > 0) {
+        line += ` [Listado - elegí UNA opción de: ${cell.options.join(", ")}]`;
+      } else if (isNumero) {
+        line += ` [Número - solo el número, sin unidades]`;
+      } else {
+        line += ` [Texto libre - máx. 100 caracteres]`;
+      }
+      return line;
+    })
+    .join("\n");
 
-  if (isListado && cell.options.length > 0) {
-    userPrompt += `\nOpciones disponibles: ${cell.options.join(", ")}
-IMPORTANTE: Debes elegir EXACTAMENTE una de las opciones disponibles, sin modificarla.`;
-  } else if (isListado && cell.dropdown_label) {
-    userPrompt += `\nLabel del campo: ${cell.dropdown_label}`;
-  }
+  const userPrompt = `Producto: ${product.product_name || "desconocido"}
+Categoría: ${product.category || "desconocida"}
+Marketplace: ${product.marketplace || "desconocido"}
 
-  if (isNumero) {
-    userPrompt += `\nRespuesta: solo el número (sin unidades, sin texto). Ejemplo: 42`;
-  } else if (isListado && cell.options.length > 0) {
-    userPrompt += `\nRespuesta: elige exactamente una opción de la lista.`;
-  } else {
-    userPrompt += `\nRespuesta: valor corto y apropiado (máx. 100 caracteres).`;
-  }
+Completá estos atributos vacíos:
+${attributeLines}
+
+Respondé SOLO con un objeto JSON válido. Las claves deben ser los nombres de atributo exactos.
+Ejemplo: {"Marca": "Samsung", "Voltaje": "220"}`;
 
   const client = getAnthropicClient();
   const response = await client.messages.create({
-    model: "claude-opus-4-6",
-    max_tokens: 100,
-    system: systemPrompt,
+    model: "claude-haiku-4-5",
+    max_tokens: 500,
+    system: `Sos un experto en catálogos de productos para marketplaces latinoamericanos.
+Completá atributos de productos basándote en su nombre y categoría.
+Respondé ÚNICAMENTE con JSON válido, sin markdown ni texto adicional.`,
     messages: [{ role: "user", content: userPrompt }],
   });
 
-  const value =
-    response.content[0]?.type === "text"
-      ? response.content[0].text.trim()
-      : "";
+  const text =
+    response.content[0]?.type === "text" ? response.content[0].text.trim() : "{}";
 
-  // Validate listado response against available options
+  try {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) {
+      return JSON.parse(match[0]) as Record<string, string>;
+    }
+  } catch {
+    // JSON parse failed
+  }
+  return {};
+}
+
+function validateValue(cell: CellInfo, rawValue: string): string {
+  const value = String(rawValue ?? "").trim();
+  if (!value) return "";
+
+  const typeLower = (cell.data_type || "").toLowerCase();
+  const isListado = typeLower.includes("listado") || typeLower.includes("list");
+
   if (isListado && cell.options.length > 0) {
-    const exact = cell.options.find(
-      (o) => o.toLowerCase() === value.toLowerCase()
-    );
+    const exact = cell.options.find((o) => o.toLowerCase() === value.toLowerCase());
     if (exact) return exact;
-
     const partial = cell.options.find(
       (o) =>
         o.toLowerCase().includes(value.toLowerCase()) ||
         value.toLowerCase().includes(o.toLowerCase())
     );
     if (partial) return partial;
-
-    // Fallback to first option
     return cell.options[0];
   }
 
@@ -122,7 +143,6 @@ export async function POST(req: NextRequest) {
     }
   };
 
-  // Process in background, return stream immediately
   (async () => {
     try {
       const body: ProcessRequest = await req.json();
@@ -140,50 +160,79 @@ export async function POST(req: NextRequest) {
       try {
         await fs.access(sourcePath);
       } catch {
-        await send({ type: "error", message: "Sesión no encontrada. Por favor sube el archivo nuevamente." });
+        await send({
+          type: "error",
+          message: "Sesión no encontrada. Por favor sube el archivo nuevamente.",
+        });
         await writer.close();
         return;
       }
 
-      const total = cells.length;
-      let processedCount = 0;
-      let errorCount = 0;
+      // Group cells by product row — 1 API call per product
+      const productMap = new Map<number, CellInfo[]>();
+      for (const cell of cells) {
+        const list = productMap.get(cell.row) ?? [];
+        list.push(cell);
+        productMap.set(cell.row, list);
+      }
+
+      const products = [...productMap.entries()];
+      const totalProducts = products.length;
+      let processedProducts = 0;
+      let totalCellsFilled = 0;
+      let totalCellsError = 0;
       const filledCells: Array<CellInfo & { value: string }> = [];
 
-      // Process cells with controlled concurrency (5 parallel)
-      const BATCH_SIZE = 5;
-      for (let i = 0; i < cells.length; i += BATCH_SIZE) {
-        const batch = cells.slice(i, i + BATCH_SIZE);
+      // Process 3 products concurrently
+      const BATCH_SIZE = 3;
+      for (let i = 0; i < products.length; i += BATCH_SIZE) {
+        const batch = products.slice(i, i + BATCH_SIZE);
 
         await Promise.all(
-          batch.map(async (cell) => {
-            let value = "";
-            let status: "ok" | "error" = "ok";
+          batch.map(async ([, productCells]) => {
+            const product = productCells[0];
+            let attributesFilled = 0;
+            let attributesError = 0;
 
             try {
-              value = await getAIValue(cell);
-              if (value) {
-                filledCells.push({ ...cell, value });
+              const values = await getProductValues(productCells);
+
+              for (const cell of productCells) {
+                const rawValue = values[cell.attribute_name];
+                if (rawValue !== undefined && String(rawValue).trim() !== "") {
+                  const value = validateValue(cell, String(rawValue));
+                  if (value) {
+                    filledCells.push({ ...cell, value });
+                    attributesFilled++;
+                    totalCellsFilled++;
+                  } else {
+                    attributesError++;
+                    totalCellsError++;
+                  }
+                } else {
+                  attributesError++;
+                  totalCellsError++;
+                }
               }
             } catch (err) {
-              console.error(`[process] Claude error for cell (${cell.row},${cell.col}):`, err);
-              status = "error";
-              errorCount++;
+              console.error(
+                `[process] Claude error for product ${product.product_name}:`,
+                err
+              );
+              attributesError = productCells.length;
+              totalCellsError += productCells.length;
             }
 
-            processedCount++;
+            processedProducts++;
 
             await send({
               type: "progress",
-              processed: processedCount,
-              total,
-              cell: { row: cell.row, col: cell.col },
-              value,
-              product_name: cell.product_name,
-              attribute_name: cell.attribute_name,
-              color: cell.color,
-              marketplace: cell.marketplace,
-              status,
+              processed: processedProducts,
+              total: totalProducts,
+              product_name: product.product_name,
+              attributes_filled: attributesFilled,
+              attributes_error: attributesError,
+              status: attributesFilled > 0 ? "ok" : "error",
             });
           })
         );
@@ -210,7 +259,10 @@ export async function POST(req: NextRequest) {
 
       const writeResult = JSON.parse(stdout);
       if (writeResult.error) {
-        await send({ type: "error", message: `Error al escribir el archivo: ${writeResult.error}` });
+        await send({
+          type: "error",
+          message: `Error al escribir el archivo: ${writeResult.error}`,
+        });
         await writer.close();
         return;
       }
@@ -218,8 +270,8 @@ export async function POST(req: NextRequest) {
       await send({
         type: "done",
         sessionId,
-        processedCount: processedCount - errorCount,
-        errorCount,
+        processedCount: totalCellsFilled,
+        errorCount: totalCellsError,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

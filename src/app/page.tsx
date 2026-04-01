@@ -86,7 +86,8 @@ export default function Home() {
       return;
     }
 
-    setProcessingTotal(cellsToProcess.length);
+    const uniqueRows = new Set(cellsToProcess.map((c) => c.row)).size;
+    setProcessingTotal(uniqueRows);
     setProcessingCount(0);
     setProcessingLog([]);
     setCurrentCell("");
@@ -139,22 +140,16 @@ export default function Home() {
 
             if (event.type === "progress") {
               setProcessingCount(event.processed);
-              setCurrentCell(
-                `${event.product_name || "Producto"} · ${event.attribute_name}`
-              );
-              if (event.attribute_name) {
-                setProcessingLog((prev) => [
-                  ...prev,
-                  {
-                    product_name: event.product_name,
-                    attribute_name: event.attribute_name,
-                    value: event.value,
-                    color: event.color,
-                    marketplace: event.marketplace,
-                    status: event.status,
-                  },
-                ]);
-              }
+              setCurrentCell(event.product_name || "Producto");
+              setProcessingLog((prev) => [
+                ...prev,
+                {
+                  product_name: event.product_name,
+                  attributes_filled: event.attributes_filled,
+                  attributes_error: event.attributes_error,
+                  status: event.status,
+                },
+              ]);
             } else if (event.type === "done") {
               setProcessedCount(event.processedCount);
               setErrorCount(event.errorCount);

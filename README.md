@@ -147,7 +147,7 @@ Luego abrí tu navegador en: **http://localhost:3000**
 
 Arrastrá tu archivo `.xlsx` o `.xls` a la zona de carga (o hacé click para buscarlo).
 
-> La planilla debe ser la que bajaste de ANYMARKET — con las 4 filas de encabezado y los productos desde la fila 5.
+> La planilla debe ser la que bajaste de ANYMARKET — con las filas de encabezado y los productos desde la fila 6.
 
 ### 2. Revisá el análisis
 
@@ -188,17 +188,48 @@ No. Todo el procesamiento ocurre en tu computadora. Los archivos solo se guardan
 Siempre revisá los valores antes de subirlos a ANYMARKET. La IA hace su mejor esfuerzo, pero un ojo humano final es importante.
 
 **¿Funciona con cualquier planilla de ANYMARKET?**
-Sí, mientras tenga el formato estándar: 4 filas de encabezado y datos desde la fila 5.
+Sí, mientras tenga el formato estándar de ANYMARKET: fila 2 con nombres de atributos, datos desde la fila 6.
+
+**¿Qué pasa si aparece el modo "sin colores detectados"?**
+Algunas planillas usan "colores de tema" de Excel que no tienen valor RGB directo. En ese caso aparece un aviso naranja y podés activar "Procesar todas las celdas vacías" para que la IA complete igual todas las celdas de atributos que estén vacías.
 
 **¿Cuánto cuesta usar la IA?**
-El costo depende de tu plan en [Anthropic](https://console.anthropic.com/). Claude Opus 4.6 cuesta $5/millón de tokens de entrada y $25/millón de salida. Para planillas medianas (100 productos, 10 atributos) el costo típico es menor a $0.50.
+El costo depende de tu plan en [Anthropic](https://console.anthropic.com/). Claude Haiku 4.5 (el modelo que usamos) cuesta $1/millón de tokens de entrada y $5/millón de salida. Para planillas de 100 productos con 10 atributos vacíos cada uno, el costo típico es menor a $0.05.
+
+---
+
+## Detalles técnicos
+
+Esta sección es para quienes quieran entender cómo funciona por dentro.
+
+### Detección de colores en planillas de ANYMARKET
+
+Las planillas de ANYMARKET son generadas por Apache POI (una librería Java). Usan una paleta de colores "indexada" de 64 entradas — no guardan el color como código RGB directo sino como un número de índice.
+
+Los dos colores clave:
+| Índice | Color | Significado |
+|--------|-------|-------------|
+| 10 | Rojo `#FF0000` | Atributo obligatorio |
+| 48 | Azul cornflower `#3366FF` | Atributo opcional |
+
+La herramienta mapea estos índices a sus valores RGB reales para clasificar cada celda. También incluye un modo alternativo que lee directamente el XML interno del archivo `.xlsx` como fallback.
+
+### Optimización de tokens (costo)
+
+En lugar de hacer una llamada a la IA por cada celda vacía (lo que sería carísimo con cientos de atributos), la herramienta agrupa todos los atributos de un mismo producto y los envía en **una sola llamada**. La IA responde con un JSON con todos los valores juntos.
+
+Esto reduce el costo hasta **30 veces** comparado con el enfoque celda por celda.
+
+### Auto-detección de estructura
+
+La herramienta detecta automáticamente desde qué fila empiezan los datos del producto (buscando la primera fila con ID numérico en columna A), por lo que funciona aunque tu planilla tenga una cantidad diferente de filas de encabezado.
 
 ---
 
 ## Tecnologías utilizadas
 
 - **Next.js 15** — Aplicación web
-- **Claude Opus 4.6** (Anthropic) — Motor de IA para completar atributos
+- **Claude Haiku 4.5** (Anthropic) — Motor de IA para completar atributos (rápido y económico)
 - **Python + openpyxl** — Lectura y escritura de archivos Excel (incluyendo colores de Apache POI)
 - **Tailwind CSS** — Diseño visual
 
