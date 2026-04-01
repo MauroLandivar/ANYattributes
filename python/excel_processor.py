@@ -246,22 +246,22 @@ def detect_structure(ws) -> dict:
     Returns { data_start_row, attr_name_row, marketplace_row,
               data_type_row, label_row }
     """
-    # Find first row where column A has a numeric product ID
-    data_start_row = 6  # default for ANYMARKET planillas
-    for row in range(3, 15):
+    # Find first row where column A has a real numeric product ID.
+    # ANYMARKET product IDs are integers — label rows like "ID Anymarket" must be excluded.
+    data_start_row = 6  # safe default for ANYMARKET planillas
+    for row in range(3, 20):
         val = ws.cell(row=row, column=1).value
-        if val is not None and str(val).strip():
-            # Check it looks like a product ID (not a label)
-            s = str(val).strip()
-            if s[0].isdigit() or (len(s) > 5 and s.replace(" ", "").isalnum()):
-                # Also verify row above has "ID Anymarket" or similar label
-                above = ws.cell(row=row - 1, column=1).value
-                if above and "ID" in str(above).upper():
-                    data_start_row = row
-                    break
-                elif above is None or str(above).strip() == "":
-                    data_start_row = row
-                    break
+        if val is None:
+            continue
+        # Accept actual int/float values (openpyxl reads numbers as int/float)
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            data_start_row = row
+            break
+        # Accept pure-digit strings (e.g. product IDs stored as text)
+        s = str(val).strip()
+        if s.isdigit():
+            data_start_row = row
+            break
 
     label_row = data_start_row - 1      # e.g. row 5
     data_type_row = data_start_row - 2  # e.g. row 4

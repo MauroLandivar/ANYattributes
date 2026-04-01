@@ -81,7 +81,7 @@ export default function RootLayout({
           <span>
             Powered by{" "}
             <span className="text-[#F97316] font-semibold">ANYMARKET</span>
-            {" "}· ANYattributes v1.0
+            {" "}· ANYattributes v1.2
           </span>
         </footer>
       </body>
