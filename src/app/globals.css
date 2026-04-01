@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --anymarket-orange: #F97316;
+  --anymarket-navy: #1e3a5f;
+  --background: #f5f7fa;
+}
+
+body {
+  background-color: var(--background);
+  color: #1a1a2e;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Drag & drop animations */
+@keyframes pulse-border {
+  0%, 100% { border-color: #F97316; }
+  50% { border-color: #EA6C0A; }
+}
+
+.drag-active {
+  animation: pulse-border 1s ease-in-out infinite;
+}
+
+/* Progress bar animation */
+@keyframes progress-shine {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.progress-animated {
+  background: linear-gradient(
+    90deg,
+    #F97316 0%,
+    #FBBF24 50%,
+    #F97316 100%
+  );
+  background-size: 200% auto;
+  animation: progress-shine 2s linear infinite;
+}
+
+/* Log item fade-in */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.log-item {
+  animation: fadeInUp 0.3s ease-out;
+}
