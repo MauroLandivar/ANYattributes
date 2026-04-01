@@ -295,6 +295,7 @@ def analyze_file(filepath: str) -> dict:
     total_products = 0
     red_cells_empty = 0
     blue_cells_empty = 0
+    unknown_cells_empty = 0  # empty attribute cells with no detected color
 
     for row in range(5, max_row + 1):
         product_id_cell = ws.cell(row=row, column=1)
@@ -314,21 +315,23 @@ def analyze_file(filepath: str) -> dict:
             if col_letter not in headers:
                 continue
 
-            color = resolve_color(cell)
-
-            if color not in ("red", "blue"):
-                continue
-
             # Only process empty cells
             cell_value = cell.value
             if cell_value is not None and str(cell_value).strip() != "":
                 continue
 
+            color = resolve_color(cell)
             hdr = headers[col_letter]
+
             if color == "red":
                 red_cells_empty += 1
-            else:
+            elif color == "blue":
                 blue_cells_empty += 1
+            else:
+                # No color detected — likely theme color from Apache POI
+                # Count as "unknown" so the UI can offer force mode
+                unknown_cells_empty += 1
+                color = "none"
 
             cells_to_fill.append({
                 "row": row,
@@ -352,6 +355,7 @@ def analyze_file(filepath: str) -> dict:
         "total_products": total_products,
         "red_cells_empty": red_cells_empty,
         "blue_cells_empty": blue_cells_empty,
+        "unknown_cells_empty": unknown_cells_empty,
         "headers": headers,
         "cells": cells_to_fill,
         "filename": os.path.basename(filepath),

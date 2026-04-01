@@ -4,6 +4,7 @@ export interface AnalysisResult {
   total_products: number;
   red_cells_empty: number;
   blue_cells_empty: number;
+  unknown_cells_empty: number;
   cells: CellInfo[];
   filename: string;
 }
@@ -21,15 +22,17 @@ export interface CellInfo {
   data_type: string;
   dropdown_label: string;
   options: string[];
-  color: "red" | "blue";
+  color: "red" | "blue" | "none";
 }
 
 interface AnalysisPanelProps {
   analysis: AnalysisResult;
   includeObligatory: boolean;
   includeOptional: boolean;
+  includeAll: boolean;
   onIncludeObligatoryChange: (v: boolean) => void;
   onIncludeOptionalChange: (v: boolean) => void;
+  onIncludeAllChange: (v: boolean) => void;
   onProcess: () => void;
   isProcessing?: boolean;
 }
@@ -63,19 +66,26 @@ export default function AnalysisPanel({
   analysis,
   includeObligatory,
   includeOptional,
+  includeAll,
   onIncludeObligatoryChange,
   onIncludeOptionalChange,
+  onIncludeAllChange,
   onProcess,
   isProcessing = false,
 }: AnalysisPanelProps) {
-  const cellsToProcess =
-    (includeObligatory ? analysis.red_cells_empty : 0) +
-    (includeOptional ? analysis.blue_cells_empty : 0);
+  const noColorsDetected =
+    analysis.red_cells_empty === 0 &&
+    analysis.blue_cells_empty === 0 &&
+    analysis.unknown_cells_empty > 0;
+
+  const cellsToProcess = includeAll
+    ? analysis.unknown_cells_empty + analysis.red_cells_empty + analysis.blue_cells_empty
+    : (includeObligatory ? analysis.red_cells_empty : 0) +
+      (includeOptional ? analysis.blue_cells_empty : 0);
 
   const estimatedMinutes = Math.max(1, Math.ceil((cellsToProcess * 2) / 60));
   const hasAnythingToProcess = cellsToProcess > 0;
 
-  // Get unique marketplaces
   const marketplaces = [...new Set(analysis.cells.map((c) => c.marketplace).filter(Boolean))];
 
   return (
@@ -135,6 +145,24 @@ export default function AnalysisPanel({
         />
       </div>
 
+      {/* Warning: no colors detected — theme color issue */}
+      {noColorsDetected && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3">
+          <svg className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <div>
+            <p className="text-sm font-semibold text-amber-800">
+              No se detectaron colores en las celdas
+            </p>
+            <p className="text-xs text-amber-700 mt-1">
+              Tu planilla usa colores de tema (Theme Colors) de Apache POI que no tienen valor RGB directo.
+              Hay <strong>{analysis.unknown_cells_empty} celdas vacías</strong> en columnas de atributos — usá el modo forzado para procesarlas igual.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Options */}
       <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
         <h3 className="font-semibold text-[#1e3a5f] text-base mb-4">
@@ -142,63 +170,98 @@ export default function AnalysisPanel({
         </h3>
 
         <div className="space-y-3">
-          {/* Obligatory checkbox */}
-          <label className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all
-            ${includeObligatory
-              ? "border-red-300 bg-red-50"
-              : "border-slate-200 hover:border-red-200 hover:bg-red-50/30"
-            }
-          `}>
-            <input
-              type="checkbox"
-              checked={includeObligatory}
-              onChange={(e) => onIncludeObligatoryChange(e.target.checked)}
-              className="mt-0.5 w-5 h-5 rounded accent-red-500 cursor-pointer"
-            />
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-sm bg-red-500 inline-block shrink-0" />
-                <span className="font-medium text-slate-800">
-                  Atributos obligatorios (celdas rojas)
-                </span>
-                <span className="text-xs px-2 py-0.5 bg-red-100 text-red-600 rounded-full font-medium">
-                  {analysis.red_cells_empty} celdas
-                </span>
+          {/* Force all — shown prominently when no colors detected */}
+          {noColorsDetected ? (
+            <label className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all
+              ${includeAll
+                ? "border-[#F97316] bg-orange-50"
+                : "border-slate-200 hover:border-[#F97316]/50 hover:bg-orange-50/30"
+              }
+            `}>
+              <input
+                type="checkbox"
+                checked={includeAll}
+                onChange={(e) => onIncludeAllChange(e.target.checked)}
+                className="mt-0.5 w-5 h-5 rounded accent-orange-500 cursor-pointer"
+              />
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-slate-800">
+                    Procesar todas las celdas vacías de atributos
+                  </span>
+                  <span className="text-xs px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full font-medium">
+                    {analysis.unknown_cells_empty} celdas
+                  </span>
+                  <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full font-medium">
+                    Recomendado
+                  </span>
+                </div>
+                <p className="text-sm text-slate-500 mt-1">
+                  Completa todas las celdas vacías en columnas de atributos, sin importar el color. Ideal cuando los colores no se detectan correctamente.
+                </p>
               </div>
-              <p className="text-sm text-slate-500 mt-1">
-                Atributos requeridos por el marketplace. Recomendado.
-              </p>
-            </div>
-          </label>
+            </label>
+          ) : (
+            <>
+              {/* Obligatory checkbox */}
+              <label className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all
+                ${includeObligatory
+                  ? "border-red-300 bg-red-50"
+                  : "border-slate-200 hover:border-red-200 hover:bg-red-50/30"
+                }
+              `}>
+                <input
+                  type="checkbox"
+                  checked={includeObligatory}
+                  onChange={(e) => onIncludeObligatoryChange(e.target.checked)}
+                  className="mt-0.5 w-5 h-5 rounded accent-red-500 cursor-pointer"
+                />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded-sm bg-red-500 inline-block shrink-0" />
+                    <span className="font-medium text-slate-800">
+                      Atributos obligatorios (celdas rojas)
+                    </span>
+                    <span className="text-xs px-2 py-0.5 bg-red-100 text-red-600 rounded-full font-medium">
+                      {analysis.red_cells_empty} celdas
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-500 mt-1">
+                    Atributos requeridos por el marketplace. Recomendado.
+                  </p>
+                </div>
+              </label>
 
-          {/* Optional checkbox */}
-          <label className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all
-            ${includeOptional
-              ? "border-blue-300 bg-blue-50"
-              : "border-slate-200 hover:border-blue-200 hover:bg-blue-50/30"
-            }
-          `}>
-            <input
-              type="checkbox"
-              checked={includeOptional}
-              onChange={(e) => onIncludeOptionalChange(e.target.checked)}
-              className="mt-0.5 w-5 h-5 rounded accent-blue-500 cursor-pointer"
-            />
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-sm bg-blue-500 inline-block shrink-0" />
-                <span className="font-medium text-slate-800">
-                  Atributos opcionales (celdas azules)
-                </span>
-                <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-600 rounded-full font-medium">
-                  {analysis.blue_cells_empty} celdas
-                </span>
-              </div>
-              <p className="text-sm text-slate-500 mt-1">
-                Mejora la visibilidad del producto, pero no es obligatorio.
-              </p>
-            </div>
-          </label>
+              {/* Optional checkbox */}
+              <label className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all
+                ${includeOptional
+                  ? "border-blue-300 bg-blue-50"
+                  : "border-slate-200 hover:border-blue-200 hover:bg-blue-50/30"
+                }
+              `}>
+                <input
+                  type="checkbox"
+                  checked={includeOptional}
+                  onChange={(e) => onIncludeOptionalChange(e.target.checked)}
+                  className="mt-0.5 w-5 h-5 rounded accent-blue-500 cursor-pointer"
+                />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded-sm bg-blue-500 inline-block shrink-0" />
+                    <span className="font-medium text-slate-800">
+                      Atributos opcionales (celdas azules)
+                    </span>
+                    <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-600 rounded-full font-medium">
+                      {analysis.blue_cells_empty} celdas
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-500 mt-1">
+                    Mejora la visibilidad del producto, pero no es obligatorio.
+                  </p>
+                </div>
+              </label>
+            </>
+          )}
         </div>
 
         {/* Time estimate */}
@@ -255,9 +318,14 @@ export default function AnalysisPanel({
         )}
       </button>
 
-      {!hasAnythingToProcess && (
+      {!hasAnythingToProcess && !noColorsDetected && (
         <p className="text-center text-sm text-slate-500">
           Selecciona al menos un tipo de atributo para procesar.
+        </p>
+      )}
+      {!hasAnythingToProcess && noColorsDetected && (
+        <p className="text-center text-sm text-slate-500">
+          Activá "Procesar todas las celdas vacías" para continuar.
         </p>
       )}
     </div>

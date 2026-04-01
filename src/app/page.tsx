@@ -22,6 +22,7 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string>("");
   const [includeObligatory, setIncludeObligatory] = useState(true);
   const [includeOptional, setIncludeOptional] = useState(false);
+  const [includeAll, setIncludeAll] = useState(false);
 
   // Step 3 state
   const [processingTotal, setProcessingTotal] = useState(0);
@@ -74,6 +75,7 @@ export default function Home() {
 
     // Filter cells based on options
     const cellsToProcess = analysis.cells.filter((c) => {
+      if (includeAll) return true;
       if (c.color === "red" && includeObligatory) return true;
       if (c.color === "blue" && includeOptional) return true;
       return false;
@@ -188,6 +190,7 @@ export default function Home() {
     setErrorCount(0);
     setIncludeObligatory(true);
     setIncludeOptional(false);
+    setIncludeAll(false);
   }, []);
 
   return (
@@ -286,8 +289,10 @@ export default function Home() {
             analysis={analysis}
             includeObligatory={includeObligatory}
             includeOptional={includeOptional}
+            includeAll={includeAll}
             onIncludeObligatoryChange={setIncludeObligatory}
             onIncludeOptionalChange={setIncludeOptional}
+            onIncludeAllChange={setIncludeAll}
             onProcess={handleProcess}
           />
 
