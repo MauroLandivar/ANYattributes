@@ -211,18 +211,58 @@ def get_xml_colors(filepath: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 def extract_dv_options(ws) -> dict[str, list[str]]:
-    """Extract dropdown options per column letter from data validations."""
+    """Extract dropdown options per column letter from data validations.
+    Handles both inline lists and named ranges (Apache POI hashed names in Oculta sheet).
+    """
     options: dict[str, list[str]] = {}
+    wb = ws.parent
+
+    # Build named-range → options lookup once
+    named_range_opts: dict[str, list[str]] = {}
+    try:
+        from openpyxl.utils.cell import range_to_tuple
+        for name in wb.defined_names:
+            defn = wb.defined_names[name]
+            attr = defn.attr_text or ""
+            if "!" not in attr:
+                continue
+            try:
+                sheet_name_raw, coords = range_to_tuple(attr)
+                sheet_name_raw = sheet_name_raw.strip("'")
+                if sheet_name_raw not in wb.sheetnames:
+                    continue
+                ref_ws = wb[sheet_name_raw]
+                min_col, min_row, max_col, max_row = coords
+                opts = []
+                for r in range(min_row, max_row + 1):
+                    for c in range(min_col, max_col + 1):
+                        val = ref_ws.cell(row=r, column=c).value
+                        if val is not None and str(val).strip():
+                            opts.append(str(val).strip())
+                if opts:
+                    named_range_opts[name] = opts
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     try:
         for dv in ws.data_validations.dataValidation:
             if dv.type != "list" or not dv.formula1:
                 continue
             formula = dv.formula1.strip('"').strip("'")
-            if "!" in formula:
+
+            # Named range reference (Apache POI hashed names)
+            if formula in named_range_opts:
+                opts = named_range_opts[formula]
+            elif "!" in formula:
                 continue
-            opts = [o.strip() for o in formula.replace(";", ",").split(",") if o.strip()]
-            if len(opts) < 2:
-                continue
+            else:
+                # Inline comma/semicolon list
+                opts = [o.strip() for o in formula.replace(";", ",").split(",") if o.strip()]
+                if len(opts) < 2:
+                    continue
+
             try:
                 for cell_range in dv.sqref.ranges:
                     for col in range(cell_range.min_col, cell_range.max_col + 1):
