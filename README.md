@@ -175,4 +175,4 @@ El costo depende de tu plan en [Anthropic](https://console.anthropic.com/). Clau
 
 ---
 
-*Powered by **ANYMARKET** · Desarrollado con Claude AI*
+*Powered by **ANYMARKET** · Desarrollado por Mauro Landivar con Claude AI*
