@@ -6,6 +6,41 @@ Olvídate de llenar manualmente cientos de celdas en tu planilla Excel. ANYattri
 
 ---
 
+## 🌐 Deploy en Railway — URL pública en 5 minutos
+
+**Railway** es la forma más fácil de tener la app corriendo en internet, gratis, con una URL pública que cualquiera puede usar.
+
+### Paso 1 — Creá tu cuenta en Railway
+
+Entrá a [railway.app](https://railway.app) y registrate con tu cuenta de GitHub.
+
+### Paso 2 — Nuevo proyecto desde GitHub
+
+1. En el dashboard, hacé click en **"New Project"**
+2. Elegí **"Deploy from GitHub repo"**
+3. Seleccioná **`ANYattributes`** de tu lista de repos
+4. Railway detecta el `Dockerfile` automáticamente ✅
+
+### Paso 3 — Agregá tu API Key de Anthropic
+
+1. Dentro del proyecto, andá a la pestaña **"Variables"**
+2. Hacé click en **"New Variable"**
+3. Nombre: `ANTHROPIC_API_KEY`
+4. Valor: tu clave de [console.anthropic.com](https://console.anthropic.com/)
+5. Guardá
+
+### Paso 4 — Generá tu URL pública
+
+1. Andá a la pestaña **"Settings"** → **"Networking"**
+2. Hacé click en **"Generate Domain"**
+3. Copiá la URL que te da Railway (algo como `anyattributes-production.up.railway.app`)
+
+¡Listo! Esa URL la podés compartir con cualquier persona. No necesitan instalar nada.
+
+> 💡 **Railway tiene un plan gratuito** con $5 de crédito mensual — más que suficiente para uso moderado.
+
+---
+
 ## ¿Qué hace esta herramienta?
 
 ```mermaid
