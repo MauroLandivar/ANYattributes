@@ -267,6 +267,60 @@ export default function Home() {
               </div>
             ))}
           </div>
+
+          {/* Changelog */}
+          <div className="mt-6 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">Changelog</span>
+            </div>
+            <div className="divide-y divide-slate-100">
+              {[
+                {
+                  version: "v1.4",
+                  date: "Abr 2026",
+                  changes: [
+                    { fix: "validateValue", desc: "Ahora valida tipos Sí/No y Boolean contra las opciones del dropdown (antes podía escribir un valor libre)" },
+                    { fix: "Agrupación por marketplace", desc: "run_sample.py ahora agrupa atributos por fila + marketplace, igual que la API web" },
+                    { fix: "Cap de opciones en prompt", desc: "Listas con más de 30 opciones se truncan al armar el prompt (evita overflow de tokens en atributos como tablas de tallas con 2854+ opciones)" },
+                    { fix: "Retry en error 429", desc: "Backoff automático ante rate limit de la API (espera 20s, 40s, 60s antes de reintentar)" },
+                  ],
+                },
+                {
+                  version: "v1.3",
+                  date: "Abr 2026",
+                  changes: [
+                    { fix: "display_name en prompts", desc: "Usa el label visible (fila 5) como nombre de atributo en el prompt, en lugar del nombre normalizado sin espacios de fila 2" },
+                    { fix: "Tipos Sí/No en prompt", desc: "Tipos sí/no, si/no y boolean se incluyen como listado en el prompt de la IA" },
+                    { fix: "Número con Unidad", desc: "Nuevo tipo: sugiere formato '10 cm', '500 g' en lugar de solo el número" },
+                    { fix: "max_tokens", desc: "Aumentado a 4096 para mayor cobertura de atributos por producto" },
+                  ],
+                },
+                {
+                  version: "v1.2",
+                  date: "Mar 2026",
+                  changes: [
+                    { fix: "Detección de estructura", desc: "Auto-detect robusto del inicio de datos: acepta IDs numéricos como int/float/string" },
+                    { fix: "Colores Apache POI", desc: "Fallback por XML interno del .xlsx para detectar indexed colors generados por Apache POI" },
+                  ],
+                },
+              ].map((entry) => (
+                <div key={entry.version} className="px-5 py-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-bold bg-[#1e3a5f] text-white rounded px-2 py-0.5">{entry.version}</span>
+                    <span className="text-xs text-slate-400">{entry.date}</span>
+                  </div>
+                  <ul className="space-y-1">
+                    {entry.changes.map((c) => (
+                      <li key={c.fix} className="text-xs text-slate-600 flex gap-2">
+                        <span className="font-semibold text-[#1e3a5f] shrink-0">{c.fix}:</span>
+                        <span>{c.desc}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 

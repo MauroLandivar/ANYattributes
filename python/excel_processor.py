@@ -419,6 +419,10 @@ def analyze_file(filepath: str) -> dict:
                 color = "none"
 
             hdr = headers[col_letter]
+            # Use human-readable label as the attribute name for AI prompts.
+            # The normalized name (row 2) is concatenated without spaces and useless for AI.
+            # The dropdown_label (row 5) is the actual display name (e.g. "características destacadas").
+            display_name = hdr["dropdown_label"] or hdr["name"]
             cells_to_fill.append({
                 "row": row,
                 "col": col,
@@ -427,7 +431,8 @@ def analyze_file(filepath: str) -> dict:
                 "product_name": str(product_name) if product_name else "",
                 "category": str(category) if category else "",
                 "skus": str(skus) if skus else "",
-                "attribute_name": hdr["name"],
+                "attribute_name": display_name,
+                "normalized_name": hdr["name"],
                 "marketplace": hdr["marketplace"],
                 "data_type": hdr["data_type"],
                 "dropdown_label": hdr["dropdown_label"],

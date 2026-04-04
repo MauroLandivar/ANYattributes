@@ -58,14 +58,25 @@ async function getProductValues(cells: CellInfo[]): Promise<Record<string, strin
   const attributeLines = cells
     .map((cell) => {
       const typeLower = (cell.data_type || "").toLowerCase();
-      const isListado = typeLower.includes("listado") || typeLower.includes("list");
-      const isNumero = typeLower.includes("numero") || typeLower.includes("number");
+      const isListado =
+        typeLower.includes("listado") ||
+        typeLower.includes("list") ||
+        typeLower.includes("sí/no") ||
+        typeLower.includes("si/no") ||
+        typeLower.includes("boolean");
+      const isNumeroUnidad = typeLower.includes("unidad");
+      const isNumero =
+        (typeLower.includes("numero") || typeLower.includes("number")) &&
+        !isNumeroUnidad;
 
       let line = `- ${cell.attribute_name}`;
       if (isListado && cell.options.length > 0) {
-        line += ` [Listado - elegí UNA opción de: ${cell.options.join(", ")}]`;
+        const opts = cell.options.length > 30 ? [...cell.options.slice(0, 30), "..."] : cell.options;
+        line += ` [Listado - elegí UNA opción de: ${opts.join(", ")}]`;
       } else if (isNumero) {
         line += ` [Número - solo el número, sin unidades]`;
+      } else if (isNumeroUnidad) {
+        line += ` [Número con unidad - ejemplo: '10 cm', '500 g']`;
       } else {
         line += ` [Texto libre - máx. 100 caracteres]`;
       }
@@ -112,7 +123,12 @@ function validateValue(cell: CellInfo, rawValue: string): string {
   if (!value) return "";
 
   const typeLower = (cell.data_type || "").toLowerCase();
-  const isListado = typeLower.includes("listado") || typeLower.includes("list");
+  const isListado =
+    typeLower.includes("listado") ||
+    typeLower.includes("list") ||
+    typeLower.includes("sí/no") ||
+    typeLower.includes("si/no") ||
+    typeLower.includes("boolean");
 
   if (isListado && cell.options.length > 0) {
     const exact = cell.options.find((o) => o.toLowerCase() === value.toLowerCase());
