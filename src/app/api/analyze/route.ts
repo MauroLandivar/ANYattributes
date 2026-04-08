@@ -4,6 +4,8 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
+import { auth } from "@/auth";
+import { prisma } from "@/lib/db";
 
 const execFileAsync = promisify(execFile);
 
@@ -12,8 +14,12 @@ const PYTHON_PATH = process.env.PYTHON_PATH || "python3";
 const PYTHON_SCRIPT = path.join(process.cwd(), "python", "excel_processor.py");
 
 export async function POST(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "No autenticado", code: "UNAUTHORIZED" }, { status: 401 });
+  }
+
   try {
-    // Parse multipart form data
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
 
@@ -21,7 +27,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No se recibió ningún archivo." }, { status: 400 });
     }
 
-    // Validate extension
     if (!file.name.match(/\.(xlsx|xls)$/i)) {
       return NextResponse.json(
         { error: "El archivo debe ser .xlsx o .xls" },
@@ -29,23 +34,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Create session directory
     const sessionId = randomUUID();
     const sessionDir = path.join(TMP_DIR, sessionId);
     await fs.mkdir(sessionDir, { recursive: true });
 
-    // Save uploaded file
     const buffer = Buffer.from(await file.arrayBuffer());
     const uploadedPath = path.join(sessionDir, "original.xlsx");
     await fs.writeFile(uploadedPath, buffer);
 
-    // Run Python analyzer
     const { stdout, stderr } = await execFileAsync(
       PYTHON_PATH,
       [PYTHON_SCRIPT, "analyze", uploadedPath],
       {
-        maxBuffer: 50 * 1024 * 1024, // 50 MB
-        timeout: 60_000, // 60s
+        maxBuffer: 50 * 1024 * 1024,
+        timeout: 60_000,
       }
     );
 
@@ -68,11 +70,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: analysis.error }, { status: 422 });
     }
 
-    // Return analysis with session ID
+    // Log upload to DB
+    await prisma.upload.create({
+      data: {
+        userId: session.user.id,
+        filename: file.name,
+        sessionId,
+      },
+    });
+
     return NextResponse.json({ sessionId, ...analysis });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
+    const stderr = (err as { stderr?: string }).stderr ?? "";
+    const stdout = (err as { stdout?: string }).stdout ?? "";
     console.error("[analyze] Error:", message);
+    if (stderr) console.error("[analyze] Python stderr:", stderr);
+    if (stdout) console.error("[analyze] Python stdout:", stdout);
 
     if (message.includes("ENOENT") && message.includes("python")) {
       return NextResponse.json(
@@ -80,15 +94,16 @@ export async function POST(req: NextRequest) {
         { status: 500 }
       );
     }
-    if (message.includes("openpyxl")) {
+    if (message.includes("openpyxl") || stderr.includes("openpyxl")) {
       return NextResponse.json(
         { error: "Dependencia faltante. Ejecuta: pip3 install openpyxl" },
         { status: 500 }
       );
     }
 
+    const detail = stderr || stdout;
     return NextResponse.json(
-      { error: `Error interno: ${message}` },
+      { error: `Error interno: ${detail || message}` },
       { status: 500 }
     );
   }

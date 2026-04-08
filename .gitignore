@@ -41,3 +41,14 @@ __pycache__/
 
 # temp files
 /tmp/
+
+# database
+prisma/dev.db
+prisma/dev.db-journal
+prisma/*.db
+
+# test/output files
+input.xlsx
+output_*.xlsx
+run_sample.py
+excel/

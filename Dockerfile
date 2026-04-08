@@ -19,7 +19,8 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Build Next.js
+# Generate Prisma client and build Next.js
+RUN npx prisma generate
 RUN npm run build
 
 ENV NODE_ENV=production
@@ -27,4 +28,5 @@ ENV PORT=3000
 
 EXPOSE 3000
 
-CMD ["npm", "start"]
+# On startup: init DB, seed admin, then start app
+CMD ["sh", "-c", "npx prisma db push --skip-generate && npm run seed && npm start"]

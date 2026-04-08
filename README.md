@@ -131,13 +131,49 @@ cp .env.local.example .env.local
 ANTHROPIC_API_KEY=sk-ant-TU-CLAVE-AQUI
 ```
 
-### Paso 4 — Iniciá la aplicación
+### Paso 4 — Configurá la base de datos y el usuario admin
+
+```bash
+# Crear la base de datos SQLite
+npm run db:push
+
+# Crear el usuario administrador (mauro@landivarparada.com)
+npm run seed
+```
+
+### Paso 5 — Iniciá la aplicación
 
 ```bash
 npm run dev
 ```
 
 Luego abrí tu navegador en: **http://localhost:3000**
+
+---
+
+## Comandos de administración
+
+### Ver cargas de la última semana
+
+```bash
+npm run stats
+```
+
+Muestra una tabla con empresa, usuario y cantidad de archivos subidos en los últimos 7 días. Ejecutar desde la terminal del servidor.
+
+Ejemplo de salida:
+```
+  CARGAS — ÚLTIMA SEMANA (01/04/2026 → hoy)
+
++---------------------+----------------------------+------------+
+| Empresa             | Usuario                    |   Archivos |
++---------------------+----------------------------+------------+
+| ANYMARKET           | mauro@landivarparada.com   |         12 |
+| Mi Empresa          | usuario@miempresa.com      |          3 |
++---------------------+----------------------------+------------+
+
+  Total: 15 archivos de 2 usuario(s)
+```
 
 ---
 

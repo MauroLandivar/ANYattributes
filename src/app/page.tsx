@@ -1,18 +1,26 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
+import { useSession } from "next-auth/react";
 import StepIndicator from "@/components/StepIndicator";
 import DropZone from "@/components/DropZone";
 import AnalysisPanel, { AnalysisResult } from "@/components/AnalysisPanel";
 import ProcessingPanel, { ProcessingLogEntry } from "@/components/ProcessingPanel";
 import DownloadPanel from "@/components/DownloadPanel";
+import AuthModal from "@/components/AuthModal";
 
 type Step = 1 | 2 | 3 | 4;
 
 export default function Home() {
+  const { data: session, status: sessionStatus } = useSession();
+
   const [step, setStep] = useState<Step>(1);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Auth modal
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
 
   // Step 1 state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -34,8 +42,8 @@ export default function Home() {
   const [processedCount, setProcessedCount] = useState(0);
   const [errorCount, setErrorCount] = useState(0);
 
-  // --- Step 1→2: Upload & analyze ---
-  const handleFileSelected = useCallback(async (file: File) => {
+  // Core upload & analyze logic (extracted so it can be called after auth)
+  const processFile = useCallback(async (file: File) => {
     setSelectedFile(file);
     setError(null);
     setIsLoading(true);
@@ -48,6 +56,13 @@ export default function Home() {
         method: "POST",
         body: formData,
       });
+
+      if (res.status === 401) {
+        setShowAuthModal(true);
+        setPendingFile(file);
+        setIsLoading(false);
+        return;
+      }
 
       const data = await res.json();
 
@@ -67,13 +82,40 @@ export default function Home() {
     }
   }, []);
 
+  // When a file is dropped: check session first
+  const handleFileSelected = useCallback(
+    async (file: File) => {
+      if (sessionStatus === "loading") return;
+      if (!session) {
+        setPendingFile(file);
+        setShowAuthModal(true);
+        return;
+      }
+      await processFile(file);
+    },
+    [session, sessionStatus, processFile]
+  );
+
+  // When auth succeeds: close modal + process pending file if any
+  const handleAuthSuccess = useCallback(() => {
+    setShowAuthModal(false);
+  }, []);
+
+  // After session is set and there's a pending file, process it
+  useEffect(() => {
+    if (session && pendingFile) {
+      const file = pendingFile;
+      setPendingFile(null);
+      processFile(file);
+    }
+  }, [session, pendingFile, processFile]);
+
   // --- Step 2→3: Process with AI ---
   const handleProcess = useCallback(async () => {
     if (!analysis || !sessionId) return;
 
     setError(null);
 
-    // Filter cells based on options
     const cellsToProcess = analysis.cells.filter((c) => {
       if (includeAll) return true;
       if (c.color === "red" && includeObligatory) return true;
@@ -111,7 +153,6 @@ export default function Home() {
         return;
       }
 
-      // Read SSE stream
       const reader = res.body?.getReader();
       if (!reader) {
         setError("No se pudo obtener el stream de respuesta.");
@@ -167,7 +208,7 @@ export default function Home() {
       setError(`Error de conexión: ${err instanceof Error ? err.message : String(err)}`);
       setStep(2);
     }
-  }, [analysis, sessionId, includeObligatory, includeOptional]);
+  }, [analysis, sessionId, includeObligatory, includeOptional, includeAll]);
 
   // --- Reset ---
   const handleReset = useCallback(() => {
@@ -190,6 +231,14 @@ export default function Home() {
 
   return (
     <div>
+      {/* Auth modal */}
+      {showAuthModal && (
+        <AuthModal
+          onSuccess={handleAuthSuccess}
+          onClose={() => { setShowAuthModal(false); setPendingFile(null); }}
+        />
+      )}
+
       {/* Step indicator */}
       <StepIndicator currentStep={step} />
 
@@ -276,31 +325,30 @@ export default function Home() {
             <div className="divide-y divide-slate-100">
               {[
                 {
+                  version: "v1.5",
+                  date: "Abr 2026",
+                  changes: [
+                    { fix: "Autenticación", desc: "Sistema de usuarios con email y contraseña. Cada usuario conecta su propia API key de Claude o ChatGPT." },
+                    { fix: "Seguridad", desc: "Contraseñas con bcrypt (hash irreversible). API keys encriptadas con AES-256-GCM." },
+                    { fix: "Multi-proveedor", desc: "Soporte para Claude (Anthropic) y ChatGPT (OpenAI) según la key del usuario." },
+                  ],
+                },
+                {
                   version: "v1.4",
                   date: "Abr 2026",
                   changes: [
-                    { fix: "validateValue", desc: "Ahora valida tipos Sí/No y Boolean contra las opciones del dropdown (antes podía escribir un valor libre)" },
-                    { fix: "Agrupación por marketplace", desc: "run_sample.py ahora agrupa atributos por fila + marketplace, igual que la API web" },
-                    { fix: "Cap de opciones en prompt", desc: "Listas con más de 30 opciones se truncan al armar el prompt (evita overflow de tokens en atributos como tablas de tallas con 2854+ opciones)" },
-                    { fix: "Retry en error 429", desc: "Backoff automático ante rate limit de la API (espera 20s, 40s, 60s antes de reintentar)" },
+                    { fix: "validateValue", desc: "Ahora valida tipos Sí/No y Boolean contra las opciones del dropdown" },
+                    { fix: "Cap de opciones en prompt", desc: "Listas con más de 30 opciones se truncan para evitar overflow de tokens" },
+                    { fix: "Retry en error 429", desc: "Backoff automático ante rate limit de la API" },
                   ],
                 },
                 {
                   version: "v1.3",
                   date: "Abr 2026",
                   changes: [
-                    { fix: "display_name en prompts", desc: "Usa el label visible (fila 5) como nombre de atributo en el prompt, en lugar del nombre normalizado sin espacios de fila 2" },
-                    { fix: "Tipos Sí/No en prompt", desc: "Tipos sí/no, si/no y boolean se incluyen como listado en el prompt de la IA" },
-                    { fix: "Número con Unidad", desc: "Nuevo tipo: sugiere formato '10 cm', '500 g' en lugar de solo el número" },
-                    { fix: "max_tokens", desc: "Aumentado a 4096 para mayor cobertura de atributos por producto" },
-                  ],
-                },
-                {
-                  version: "v1.2",
-                  date: "Mar 2026",
-                  changes: [
-                    { fix: "Detección de estructura", desc: "Auto-detect robusto del inicio de datos: acepta IDs numéricos como int/float/string" },
-                    { fix: "Colores Apache POI", desc: "Fallback por XML interno del .xlsx para detectar indexed colors generados por Apache POI" },
+                    { fix: "display_name en prompts", desc: "Usa el label visible como nombre de atributo en el prompt" },
+                    { fix: "Número con Unidad", desc: "Nuevo tipo: sugiere formato '10 cm', '500 g'" },
+                    { fix: "max_tokens", desc: "Aumentado a 4096 para mayor cobertura de atributos" },
                   ],
                 },
               ].map((entry) => (

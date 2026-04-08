@@ -4,18 +4,16 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
+import { auth } from "@/auth";
+import { prisma } from "@/lib/db";
+import { decrypt } from "@/lib/crypto";
 
 const execFileAsync = promisify(execFile);
 
 const TMP_DIR = "/tmp/anyattributes";
 const PYTHON_PATH = process.env.PYTHON_PATH || "python3";
 const PYTHON_SCRIPT = path.join(process.cwd(), "python", "excel_processor.py");
-
-function getAnthropicClient() {
-  return new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY || "placeholder",
-  });
-}
 
 interface CellInfo {
   row: number;
@@ -52,10 +50,8 @@ type SSEData =
   | { type: "done"; sessionId: string; processedCount: number; errorCount: number }
   | { type: "error"; message: string };
 
-async function getProductValues(cells: CellInfo[]): Promise<Record<string, string>> {
-  const product = cells[0];
-
-  const attributeLines = cells
+function buildPromptLines(cells: CellInfo[]): string {
+  return cells
     .map((cell) => {
       const typeLower = (cell.data_type || "").toLowerCase();
       const isListado =
@@ -83,24 +79,29 @@ async function getProductValues(cells: CellInfo[]): Promise<Record<string, strin
       return line;
     })
     .join("\n");
+}
 
+const SYSTEM_PROMPT = `Sos un experto en catálogos de productos para marketplaces latinoamericanos.
+Completá atributos de productos basándote en su nombre y categoría.
+Respondé ÚNICAMENTE con JSON válido, sin markdown ni texto adicional.`;
+
+async function getProductValuesClaude(cells: CellInfo[], apiKey: string): Promise<Record<string, string>> {
+  const product = cells[0];
   const userPrompt = `Producto: ${product.product_name || "desconocido"}
 Categoría: ${product.category || "desconocida"}
 Marketplace: ${product.marketplace || "desconocido"}
 
 Completá estos atributos vacíos:
-${attributeLines}
+${buildPromptLines(cells)}
 
 Respondé SOLO con un objeto JSON válido. Las claves deben ser los nombres de atributo exactos.
 Ejemplo: {"Marca": "Samsung", "Voltaje": "220"}`;
 
-  const client = getAnthropicClient();
+  const client = new Anthropic({ apiKey });
   const response = await client.messages.create({
     model: "claude-haiku-4-5",
     max_tokens: 4096,
-    system: `Sos un experto en catálogos de productos para marketplaces latinoamericanos.
-Completá atributos de productos basándote en su nombre y categoría.
-Respondé ÚNICAMENTE con JSON válido, sin markdown ni texto adicional.`,
+    system: SYSTEM_PROMPT,
     messages: [{ role: "user", content: userPrompt }],
   });
 
@@ -109,13 +110,55 @@ Respondé ÚNICAMENTE con JSON válido, sin markdown ni texto adicional.`,
 
   try {
     const match = text.match(/\{[\s\S]*\}/);
-    if (match) {
-      return JSON.parse(match[0]) as Record<string, string>;
-    }
+    if (match) return JSON.parse(match[0]) as Record<string, string>;
   } catch {
-    // JSON parse failed
+    // parse failed
   }
   return {};
+}
+
+async function getProductValuesGPT(cells: CellInfo[], apiKey: string): Promise<Record<string, string>> {
+  const product = cells[0];
+  const userPrompt = `Producto: ${product.product_name || "desconocido"}
+Categoría: ${product.category || "desconocida"}
+Marketplace: ${product.marketplace || "desconocido"}
+
+Completá estos atributos vacíos:
+${buildPromptLines(cells)}
+
+Respondé SOLO con un objeto JSON válido. Las claves deben ser los nombres de atributo exactos.
+Ejemplo: {"Marca": "Samsung", "Voltaje": "220"}`;
+
+  const client = new OpenAI({ apiKey });
+  const response = await client.chat.completions.create({
+    model: "gpt-4o-mini",
+    max_tokens: 4096,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userPrompt },
+    ],
+  });
+
+  const text = response.choices[0]?.message?.content?.trim() ?? "{}";
+
+  try {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]) as Record<string, string>;
+  } catch {
+    // parse failed
+  }
+  return {};
+}
+
+async function getProductValues(
+  cells: CellInfo[],
+  provider: string,
+  apiKey: string
+): Promise<Record<string, string>> {
+  if (provider === "gpt") {
+    return getProductValuesGPT(cells, apiKey);
+  }
+  return getProductValuesClaude(cells, apiKey);
 }
 
 function validateValue(cell: CellInfo, rawValue: string): string {
@@ -146,8 +189,36 @@ function validateValue(cell: CellInfo, rawValue: string): string {
 }
 
 export async function POST(req: NextRequest) {
-  const encoder = new TextEncoder();
+  const session = await auth();
+  if (!session?.user?.id) {
+    return new Response(JSON.stringify({ error: "No autenticado" }), { status: 401 });
+  }
 
+  // Get user's API key from DB
+  const apiKeyRecord = await prisma.apiKey.findUnique({
+    where: { userId: session.user.id },
+  });
+
+  if (!apiKeyRecord) {
+    return new Response(
+      JSON.stringify({ error: "No tenés una API key configurada. Contactá al administrador." }),
+      { status: 403 }
+    );
+  }
+
+  let plainApiKey: string;
+  try {
+    plainApiKey = decrypt(apiKeyRecord.encryptedKey);
+  } catch {
+    return new Response(
+      JSON.stringify({ error: "Error al leer tu API key. Contactá al administrador." }),
+      { status: 500 }
+    );
+  }
+
+  const provider = apiKeyRecord.provider;
+
+  const encoder = new TextEncoder();
   const stream = new TransformStream<Uint8Array, Uint8Array>();
   const writer = stream.writable.getWriter();
 
@@ -200,7 +271,6 @@ export async function POST(req: NextRequest) {
       let totalCellsError = 0;
       const filledCells: Array<CellInfo & { value: string }> = [];
 
-      // Process 3 products concurrently
       const BATCH_SIZE = 3;
       for (let i = 0; i < products.length; i += BATCH_SIZE) {
         const batch = products.slice(i, i + BATCH_SIZE);
@@ -212,7 +282,7 @@ export async function POST(req: NextRequest) {
             let attributesError = 0;
 
             try {
-              const values = await getProductValues(productCells);
+              const values = await getProductValues(productCells, provider, plainApiKey);
 
               for (const cell of productCells) {
                 const rawValue = values[cell.attribute_name];
@@ -231,11 +301,17 @@ export async function POST(req: NextRequest) {
                   totalCellsError++;
                 }
               }
-            } catch (err) {
-              console.error(
-                `[process] Claude error for product ${product.product_name}:`,
-                err
-              );
+            } catch (err: unknown) {
+              const errMsg = err instanceof Error ? err.message : String(err);
+              const status = (err as { status?: number })?.status;
+
+              if (status === 429 || errMsg.includes("insufficient_quota") || errMsg.includes("credits")) {
+                await send({ type: "error", message: "Sin saldo en tu API key. Recargá tu cuenta para continuar." });
+                await writer.close();
+                return;
+              }
+
+              console.error(`[process] API error for product ${product.product_name}:`, errMsg);
               attributesError = productCells.length;
               totalCellsError += productCells.length;
             }
@@ -255,7 +331,6 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Write filled values to Excel via Python
       const cellsJsonPath = path.join(sessionDir, "cells_filled.json");
       await fs.writeFile(cellsJsonPath, JSON.stringify(filledCells), "utf-8");
 
