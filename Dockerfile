@@ -31,5 +31,5 @@ ENV PORT=3000
 
 EXPOSE 3000
 
-# On startup: init DB, seed admin, then start app
-CMD ["sh", "-c", "npx prisma db push --skip-generate && npm run seed && npm start"]
+# On startup: init DB, seed admin (env vars come from Railway), then start app
+CMD ["sh", "-c", "npx prisma db push --skip-generate && npx tsx scripts/seed.ts && npm start"]

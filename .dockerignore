@@ -1,8 +1,11 @@
 .next/
 node_modules/
+.env
 .env.local
 .env*.local
 __pycache__/
 *.pyc
 .git/
 README.md
+prisma/prisma/
+prisma/*.db
