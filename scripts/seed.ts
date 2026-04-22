@@ -1,11 +1,12 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
-import { createCipheriv, randomBytes } from "crypto";
+import { createCipheriv, createHash, randomBytes } from "crypto";
 
 const prisma = new PrismaClient();
 
-function encryptKey(text: string, hexKey: string): string {
-  const key = Buffer.from(hexKey, "hex");
+function encryptKey(text: string, rawKey: string): string {
+  // SHA-256 always yields exactly 32 bytes regardless of input format/length
+  const key = createHash("sha256").update(rawKey).digest();
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   const encrypted = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);

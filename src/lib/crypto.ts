@@ -1,11 +1,12 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 
 const ALGORITHM = "aes-256-gcm";
 
 function getKey(): Buffer {
   const key = process.env.ENCRYPTION_KEY;
   if (!key) throw new Error("ENCRYPTION_KEY no configurado");
-  return Buffer.from(key, "hex");
+  // SHA-256 always yields exactly 32 bytes regardless of input format/length
+  return createHash("sha256").update(key).digest();
 }
 
 /**
