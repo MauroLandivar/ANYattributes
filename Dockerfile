@@ -20,8 +20,11 @@ RUN npm ci
 COPY . .
 
 # Generate Prisma client and build Next.js
-RUN npx prisma generate
-RUN npm run build
+# DATABASE_URL is only available at runtime; use a placeholder so Prisma schema
+# validation passes during build. The real URL is injected by Railway at startup.
+ARG DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder"
+RUN DATABASE_URL=$DATABASE_URL npx prisma generate
+RUN DATABASE_URL=$DATABASE_URL npm run build
 
 ENV NODE_ENV=production
 ENV PORT=3000
