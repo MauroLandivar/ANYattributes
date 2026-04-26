@@ -32,4 +32,4 @@ ENV PORT=3000
 EXPOSE 3000
 
 # On startup: init DB, seed admin (env vars come from Railway), then start app
-CMD ["sh", "-c", "npx prisma db push --skip-generate && npx tsx scripts/seed.ts && npm start"]
+CMD ["sh", "-c", "echo '=== ENV CHECK ===' && env | grep -E '^(AUTH|DATABASE|ENCRYPTION|ANTHROPIC)' | sed 's/=.*/=***SET***/' && echo '=== END ENV CHECK ===' && npx prisma db push --skip-generate && npx tsx scripts/seed.ts && npm start"]
